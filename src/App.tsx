@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Scan, User, Laptop, CheckCircle, AlertTriangle, XCircle, Plus, Loader2, MonitorOff, LogIn, LogOut, UserCheck, QrCode, ArrowRight, Smartphone, Download, FileText, Camera, X, Keyboard, Grid, Barcode, Zap } from 'lucide-react';
 
@@ -23,15 +22,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [currentAssets, setCurrentAssets] = useState<any[]>([]);
   const [feedback, setFeedback] = useState({ type: '', msg: '' });
-
+  
   const [currentMode, setCurrentMode] = useState<'ENTRADA' | 'SALIDA'>('ENTRADA');
-
+  
   const [newUserForm, setNewUserForm] = useState({ name: '', assetDesc: '', assetId: '' });
   const [hasLaptop, setHasLaptop] = useState(true);
-
+  
   const [generatedCodeData, setGeneratedCodeData] = useState<{id: string, type: 'QR' | 'BARCODE'} | null>(null);
   const [dashboardSearch, setDashboardSearch] = useState('');
-
+  
   const [isScanning, setIsScanning] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [showManualInput, setShowManualInput] = useState(false);
@@ -46,11 +45,13 @@ export default function App() {
   // --- 1. GESTIÓN DE CÁMARA (HÍBRIDA) ---
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } // Aumentamos la resolución de captura
+      });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-
+      
       if ('BarcodeDetector' in window) {
           setNativeMode(true);
       } else {
@@ -95,13 +96,9 @@ export default function App() {
     try {
         const formData = new FormData();
         formData.append('file', imageBlob);
-
-        // Hacemos el escaneo universal (QR, Code128, etc)
-        // <- ACTUALIZADO: incluimos muchos más formatos de barra y matrices.
-        formData.append(
-          'formats',
-          'qrcode,code128,code39,ean13,ean8,upca,upce,codabar,itf,code93,msi,aztec,pdf417,datamatrix'
-        );
+        
+        // Enviamos el formato de códigos de barras MÁS USADO (Code 128)
+        formData.append('formats', 'qrcode,code128,ean13,code39'); 
 
         const response = await fetch(QR_READ_API, { method: 'POST', body: formData });
         const data = await response.json();
@@ -143,6 +140,7 @@ export default function App() {
   const processScanCode = (code: string) => {
     if (!code) return;
     console.log("Procesando:", code);
+    
     if (appState === STATE.WAITING || appState === STATE.RESULT || appState === STATE.USER_DETECTED) {
         fetchUser(code);
     } else if (appState === STATE.NEW_USER_MODE) {
@@ -173,32 +171,12 @@ export default function App() {
     setIsScanning(true);
     if ('BarcodeDetector' in window) {
         try {
-            // <- ACTUALIZADO: BarcodeDetector con más formatos
-            const barcodeDetector = new (window as any).BarcodeDetector({
-              formats: [
-                'qr_code',
-                'code_128',
-                'code_39',
-                'ean_13',
-                'ean_8',
-                'upc_a',
-                'upc_e',
-                'codabar',
-                'itf',
-                'code_93',
-                'msi',
-                'aztec',
-                'pdf417',
-                'data_matrix'
-              ]
-            });
+            const barcodeDetector = new (window as any).BarcodeDetector({formats: ['qr_code', 'code_128', 'ean_13']});
             const imageBitmap = await createImageBitmap(file);
             const barcodes = await barcodeDetector.detect(imageBitmap);
             if (barcodes.length > 0) {
                 setIsScanning(false);
-                // rawValue may be rawValue or rawData depending on implementation
-                const raw = barcodes[0].rawValue || (barcodes[0].rawData && String(barcodes[0].rawData));
-                processScanCode(raw);
+                processScanCode(barcodes[0].rawValue);
                 e.target.value = '';
                 return;
             }
@@ -207,8 +185,7 @@ export default function App() {
     try {
         const formData = new FormData();
         formData.append('file', file);
-        // <- ACTUALIZADO: formatos ampliados
-        formData.append('formats', 'qrcode,code128,code39,ean13,ean8,upca,upce,codabar,itf,code93,msi,aztec,pdf417,datamatrix'); 
+        formData.append('formats', 'qrcode,code128,ean13,code39'); 
         const response = await fetch(QR_READ_API, { method: 'POST', body: formData });
         const data = await response.json();
         if (data && data[0]?.symbol?.[0]?.data) {
@@ -239,19 +216,22 @@ export default function App() {
       if (data.status === 'success') {
         setCurrentUser(data.usuario);
         setCurrentAssets(data.activos || []);
-
+        
         if (isDashboardSearch) {
             setAppState(STATE.DASHBOARD);
         } else {
             if (data.tipo === 'ACTIVO') {
+                // Opción 1: Escaneó código de portátil. Hacemos registro RÁPIDO.
                 await logMovement(currentMode, data.usuario.cedula, data.activo.id_activo, 'EXITOSO (SCAN&GO)', data.usuario.nombre);
                 showFeedback('success', `${currentMode} RÁPIDA: ${data.usuario.nombre} - ${data.activo.id_activo}`);
             } else {
+                 // Opción 2: Escaneó cédula/código de barras personal. 
                  if (currentMode === 'SALIDA') {
                      const assetIdForCycle = data.usuario.cedula; 
                      await logMovement('SALIDA', data.usuario.cedula, assetIdForCycle, 'EXITOSO (PEATONAL)', data.usuario.nombre);
                      showFeedback('success', `SALIDA PEATONAL RÁPIDA: ${data.usuario.nombre}`);
                  } else {
+                    // Si el modo es ENTRADA, mostramos la pantalla de "Trae equipo?"
                     setAppState(STATE.USER_DETECTED);
                  }
             }
@@ -307,15 +287,15 @@ export default function App() {
           descripcion: hasLaptop ? newUserForm.assetDesc : 'Peatonal',
           crearUsuario: true
       };
-
+      
       const response = await fetch(API_URL, { method: 'POST', body: JSON.stringify(payload) });
       const data = await response.json();
-
+      
       if (data.status === 'success') {
         const codeForEntry = hasLaptop ? payload.id_activo : currentUser.cedula;
 
         await logMovement('ENTRADA', currentUser.cedula, codeForEntry, 'EXITOSO (REGISTRO)', newUserForm.name);
-
+        
         if (hasLaptop) {
             setGeneratedCodeData({ id: payload.id_activo, type: 'QR' });
         } else {
@@ -349,7 +329,6 @@ export default function App() {
   };
 
   // --- DESCARGAR E IMPRIMIR ---
-  // Obtiene la URL de la IMAGEN FINAL (QR del equipo O Barras de la cédula)
   const getFinalImageUrl = () => {
       if (!generatedCodeData) return '';
       if (generatedCodeData.type === 'QR') {
@@ -358,7 +337,7 @@ export default function App() {
           return `https://bwipjs-api.metafloor.com/?bcid=code128&text=${generatedCodeData.id}&scale=3&rotate=N&includetext`;
       }
   };
-
+  
   // URL del QR que se muestra en pantalla (codifica la URL de la imagen final)
   const screenQrUrl = generatedCodeData ? `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(getFinalImageUrl())}` : '';
 
@@ -494,7 +473,7 @@ export default function App() {
           <div className="space-y-6 text-center">
             <h3 className="text-xl font-bold text-white">¿El usuario trae equipo?</h3>
             <div className="bg-slate-700/50 p-6 rounded-xl border border-slate-600">
-                <Laptop className="w-10 h-10 mx-auto text-cyan-400 mb-2" /><p className="text-cyan-300 font-bold mb-4">SÍ TRAE PORTÁTIL</p>
+                <Laptop className="w-10 h-10 mx-auto text-cyan-400 mb-2" /><p className="text-cyan-3d00 font-bold mb-4">SÍ TRAE PORTÁTIL</p>
                 <button onClick={() => { startCamera(); setShowCamera(true); }} className="bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-lg font-bold flex items-center justify-center gap-2 mx-auto border border-slate-500"><Camera className="w-5 h-5" /> ESCANEAR QR/BARRAS</button>
             </div>
             <button onClick={handleManualEntry} className="w-full py-4 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold text-slate-200 flex items-center justify-center gap-2 border border-slate-500"><UserCheck className="w-5 h-5" /> ENTRADA PEATONAL (SIN EQUIPO)</button>
@@ -506,6 +485,63 @@ export default function App() {
       {appState === STATE.NEW_USER_MODE && (
         <div className="w-full max-w-lg bg-slate-800 rounded-2xl p-8 border-2 border-yellow-500 shadow-2xl">
           <div className="text-center mb-6"><User className="w-16 h-16 mx-auto text-yellow-500 mb-2" /><h2 className="text-2xl font-bold text-white">REGISTRO INICIAL</h2>
-            <div className="flex items-center justify-center gap-2 mt-4 bg-slate-900/50 p-2 rounded-lg border border-slate-700"><span className="text-slate-400 text-sm font-bold">CÉD
+            <div className="flex items-center justify-center gap-2 mt-4 bg-slate-900/50 p-2 rounded-lg border border-slate-700"><span className="text-slate-400 text-sm font-bold">CÉDULA:</span><input type="number" className="bg-transparent text-yellow-400 font-mono text-lg font-bold text-center outline-none w-40 border-b border-slate-600 focus:border-yellow-500" value={currentUser?.cedula || ''} onChange={(e) => setCurrentUser({...currentUser, cedula: e.target.value})} /></div>
+          </div>
+          <div className="space-y-4">
+            <div><label className="block text-sm text-slate-400 mb-1">Nombre Completo</label><input type="text" autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-white focus:border-yellow-500 outline-none" placeholder="Escriba nombre..." value={newUserForm.name} onChange={e => setNewUserForm({...newUserForm, name: e.target.value})} /></div>
+            <div className="flex items-center gap-3 p-3 bg-slate-700/30 rounded-lg border border-slate-600 cursor-pointer" onClick={() => setHasLaptop(!hasLaptop)}><div className={`w-6 h-6 rounded border flex items-center justify-center ${hasLaptop ? 'bg-yellow-500 border-yellow-500' : 'border-slate-400'}`}>{hasLaptop && <CheckCircle className="w-4 h-4 text-black" />}</div><span className="text-sm font-bold text-white">¿Registrar Portátil?</span></div>
+            {hasLaptop ? (
+                <>
+                    <div className="p-4 bg-slate-700/50 rounded-lg border border-slate-600"><label className="block text-sm text-yellow-400 font-bold mb-2 uppercase flex items-center gap-2"><QrCode className="w-4 h-4" /> SERIAL / ID DEL EQUIPO</label><input type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-white font-mono text-center focus:border-yellow-500 outline-none" placeholder="Ej: SN-554422" value={newUserForm.assetId} onChange={e => setNewUserForm({...newUserForm, assetId: e.target.value})} /></div>
+                    <div><label className="block text-sm text-slate-400 mb-1">Descripción (Marca/Color)</label><input type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-white" placeholder="Ej: HP Pavilion Azul" value={newUserForm.assetDesc} onChange={e => setNewUserForm({...newUserForm, assetDesc: e.target.value})} /></div>
+                </>
+            ) : null}
+            <button onClick={registerNewUserAndAsset} className="w-full bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-4 rounded-lg mt-4 flex items-center justify-center gap-2"><Plus className="w-5 h-5" /> GUARDAR Y GENERAR</button>
+            <button onClick={() => setAppState(STATE.WAITING)} className="w-full text-slate-500 text-sm mt-2 hover:text-white">Cancelar</button>
+          </div>
+        </div>
+      )}
 
-/* truncated: file was large; full file has been saved on disk */
+      {/* PANTALLA DE ENTREGA DE CÓDIGO */}
+      {appState === STATE.SHOW_CODE && generatedCodeData && (
+        <div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-2xl text-center text-slate-800 animate-bounce-slow printable-area">
+            <h2 className="text-3xl font-black mb-2 text-slate-900">¡CÓDIGO LISTO!</h2>
+            <p className="text-slate-500 mb-4">
+                Escanee este QR para descargar su {generatedCodeData.type === 'QR' ? 'pase de equipo.' : 'pase personal de barras.'}
+            </p>
+            
+            <div className="bg-white p-4 border-4 border-slate-900 rounded-xl inline-block mb-4 shadow-lg min-w-[250px]">
+                {/* ESTO ES EL QR QUE LLEVA A LA IMAGEN FINAL */}
+                <img 
+                    src={screenQrUrl} 
+                    alt="QR Maestro" 
+                    className="w-56 h-56"
+                />
+            </div>
+            
+            <div className="bg-slate-100 p-3 rounded-lg mb-6">
+                <p className="text-xs text-slate-500 uppercase font-bold">{generatedCodeData.type === 'QR' ? 'SERIAL EQUIPO' : 'CÉDULA USUARIO'}</p>
+                <p className="text-xl font-mono font-bold text-slate-800">{generatedCodeData.id}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 no-print">
+                <button onClick={handleDownloadCode} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 flex items-center justify-center gap-2"><Download className="w-5 h-5" /> DESCARGAR</button>
+                <button onClick={handlePrint} className="w-full bg-slate-700 text-white font-bold py-3 rounded-xl hover:bg-slate-800 flex items-center justify-center gap-2"><FileText className="w-5 h-5" /> PDF</button>
+            </div>
+            <button onClick={() => showFeedback('success', 'Proceso finalizado.')} className="w-full mt-4 text-slate-400 font-bold py-3 hover:text-slate-600 flex items-center justify-center gap-2 no-print"><ArrowRight className="w-5 h-5" /> CERRAR</button>
+        </div>
+      )}
+
+      {/* FEEDBACK */}
+      {appState === STATE.RESULT && (
+        <div className={`text-center p-12 rounded-3xl shadow-2xl transform scale-110 transition-all ${feedback.type === 'success' ? 'bg-emerald-600' : feedback.type === 'alarm' ? 'bg-red-600 animate-pulse' : 'bg-slate-700'}`}>
+          {feedback.type === 'success' && <CheckCircle className="w-32 h-32 mx-auto mb-4 text-white" />}
+          {feedback.type === 'alarm' && <AlertTriangle className="w-32 h-32 mx-auto mb-4 text-white" />}
+          {feedback.type === 'error' && <XCircle className="w-32 h-32 mx-auto mb-4 text-white" />}
+          <h2 className="text-4xl font-black text-white uppercase">{feedback.type === 'alarm' ? 'ALERTA' : feedback.type === 'success' ? 'AUTORIZADO' : 'ERROR'}</h2>
+          <p className="text-xl text-white/90 mt-4 font-bold">{feedback.msg}</p>
+        </div>
+      )}
+    </div>
+  );
+}
